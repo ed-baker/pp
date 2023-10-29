@@ -5,22 +5,16 @@
 // Write tests for formatter
 //
 // Define PP with method fprintf/pprint which takes:
-// 1. formatter F
-// 2. closure A which takes a type X
-// 3. value of X to pass to F
-//
-// Figure out borrow checking for some of this stuff
-// Might need to define the functions called by the user for the formatter as closures or something
 
-use anyhow::Result;
 use std::{
-    cell::RefCell,
     cmp::min,
     collections::{HashMap, VecDeque},
     ops::Add,
-    rc::Rc,
-    str::Chars,
 };
+
+// pub trait Pretty {
+//     fn prettify(&self, ppf: &mut BufPrinter<'_>) -> String;
+// }
 
 /*
 * Handling usize -> i32 conversion.
@@ -45,12 +39,6 @@ impl LenAsI32 for str {
         self.len().try_into().unwrap()
     }
 }
-
-// impl<'a> CountAsI32 for Chars<'a> {
-//     fn count_i32(&self) -> i32 {
-//         self.count().try_into().unwrap()
-//     }
-// }
 
 const INFINITY: i32 = 1000000010;
 
@@ -116,7 +104,7 @@ impl Add<i32> for Size {
 *      the line if splitting would move to the left)
 */
 #[derive(Clone, Debug)]
-enum PpBox {
+pub enum PpBox {
     Hbox(),
     Vbox(),
     Hvbox(),
@@ -126,11 +114,11 @@ enum PpBox {
 }
 
 #[derive(Clone, Debug)]
-enum PpToken<'a> {
-    Text(&'a str), // normal text
+enum PpToken {
+    Text(String), // normal text
     Break {
-        fits: (&'a str, i32, &'a str),   // line is not split
-        breaks: (&'a str, i32, &'a str), // line is split
+        fits: (String, i32, String),   // line is not split
+        breaks: (String, i32, String), // line is split
     },
     Begin(i32, PpBox), // Beginning of a box
     End(),             // End of a box
@@ -139,7 +127,7 @@ enum PpToken<'a> {
                        // CloseTag(), // closing the most recently opened tab
 }
 
-impl<'a> LenAsI32 for PpToken<'a> {
+impl LenAsI32 for PpToken {
     fn len_i32(&self) -> i32 {
         match self {
             PpToken::Text(s) => s.len_i32(),
@@ -151,7 +139,7 @@ impl<'a> LenAsI32 for PpToken<'a> {
     }
 }
 
-impl<'a> PpToken<'a> {
+impl PpToken {
     fn len(&self) -> usize {
         match self {
             PpToken::Text(s) => s.len(),
@@ -163,7 +151,7 @@ impl<'a> PpToken<'a> {
     }
 }
 
-impl<'a> SizeAsI32 for PpToken<'a> {
+impl SizeAsI32 for PpToken {
     fn size_i32(&self) -> i32 {
         match self {
             PpToken::Text(s) => s.len_i32(),
@@ -179,13 +167,13 @@ impl<'a> SizeAsI32 for PpToken<'a> {
 
 // PpQueueT contains a usize which is the token_id reference for self.tokens
 #[derive(Clone, Debug)]
-struct PpQueueT(usize);
+pub struct PpQueueT(usize);
 
 /* The pretty-printer scanning stack */
 
 /* The pretty-printer scanning stack: scanning element definition */
 #[derive(Debug)]
-struct PpScanT {
+pub struct PpScanT {
     left_total: i32, // Value of self.left_total when the element was enqueued.
     token_idx: usize,
 }
@@ -207,14 +195,12 @@ struct PpFormatT {
 const ELLIPSIS: &str = ".";
 
 #[derive(Debug)]
-struct Formatter<'a> {
+pub struct BufPrinter {
     // The token mapping.
-    tokens: Vec<PpToken<'a>>,
+    tokens: Vec<PpToken>,
     // The token length mapping.
-    // token_lengths: Vec<i32>,
     token_lengths: HashMap<usize, i32>,
     // The token size mapping.
-    // token_sizes: Vec<Size>,
     token_sizes: HashMap<usize, Size>,
     // The pretty-printer scanning stack.
     scan_stack: Vec<PpScanT>,
@@ -254,10 +240,10 @@ struct Formatter<'a> {
     // Output of break hints spaces.
     // out_spaces: fn(),
     // The output buffer we write to for now.
-    out_buf: String,
+    pub out_buf: String,
 }
 
-impl<'a> Formatter<'a> {
+impl BufPrinter {
     pub fn new(
         margin: i32,
         min_space_left: i32,
@@ -268,7 +254,7 @@ impl<'a> Formatter<'a> {
         // out_newline: fn(),
         // out_spaces: fn(),
     ) -> Self {
-        let tokens: Vec<PpToken<'a>> = Vec::new();
+        let tokens: Vec<PpToken> = Vec::new();
         // Token length mapping.
         // let token_lengths: Vec<i32> = Vec::new();
         let token_lengths: HashMap<usize, i32> = HashMap::new();
@@ -282,7 +268,7 @@ impl<'a> Formatter<'a> {
         // The pretty-printer queue.
         let queue: VecDeque<PpQueueT> = VecDeque::new();
 
-        let mut f = Formatter {
+        let mut f = BufPrinter {
             tokens,
             token_lengths,
             token_sizes,
@@ -320,23 +306,23 @@ impl<'a> Formatter<'a> {
         f
     }
 
-    pub fn add_token(&mut self, token: PpToken<'a>) -> usize {
+    fn add_token(&mut self, token: PpToken) -> usize {
         self.tokens.push(token);
         return self.tokens.len() - 1;
     }
 
-    pub fn enqueue(&mut self, token_id: usize) {
+    fn enqueue(&mut self, token_id: usize) {
         self.right_total += self.token_lengths[&token_id];
         self.queue.push_back(PpQueueT(token_id))
     }
 
-    pub fn clear_queue(&mut self) {
+    fn clear_queue(&mut self) {
         self.left_total = 1;
         self.right_total = 1;
         self.queue.clear()
     }
 
-    pub fn output_string(&mut self, s: &str) {
+    fn output_string(&mut self, s: &str) {
         self.out_buf.push_str(s);
     }
 
@@ -344,7 +330,7 @@ impl<'a> Formatter<'a> {
         self.out_buf.push_str("\n");
     }
 
-    pub fn output_spaces(&mut self, n: i32) {
+    fn output_spaces(&mut self, n: i32) {
         for _ in 0..n {
             self.out_buf.push_str(" ");
         }
@@ -356,20 +342,20 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    pub fn format_pp_text(&mut self, s: &str, size: i32) {
+    fn format_pp_text(&mut self, s: &str, size: i32) {
         self.space_left -= size;
         self.output_string(s);
         self.is_new_line = false;
     }
 
-    pub fn format_string(&mut self, s: &str) {
+    fn format_string(&mut self, s: &str) {
         if s != "" {
             self.format_pp_text(s, s.len_i32())
         }
     }
 
     // To format a break, indenting a new line.
-    pub fn break_new_line(&mut self, before: &str, offset: i32, after: &str, width: i32) {
+    fn break_new_line(&mut self, before: &str, offset: i32, after: &str, width: i32) {
         self.format_string(before);
         self.output_newline();
         self.is_new_line = true;
@@ -383,19 +369,19 @@ impl<'a> Formatter<'a> {
     }
 
     // To force a line break inside a box: no offset is added.
-    pub fn break_line(&mut self, width: i32) {
+    fn break_line(&mut self, width: i32) {
         self.break_new_line("", 0, "", width)
     }
 
     // To format a break that fits on the current line.
-    pub fn break_same_line(&mut self, before: &str, width: i32, after: &str) {
+    fn break_same_line(&mut self, before: &str, width: i32, after: &str) {
         self.format_string(before);
         self.space_left -= width;
         self.output_spaces(width);
         self.format_string(after)
     }
 
-    pub fn force_break_line(&mut self) {
+    fn force_break_line(&mut self) {
         match self.format_stack.last() {
             None => self.output_newline(),
             Some(f) => {
@@ -410,7 +396,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    pub fn skip_token(&mut self) {
+    fn skip_token(&mut self) {
         match self.queue.pop_front() {
             None => (),
             Some(queue_elem) => {
@@ -425,8 +411,7 @@ impl<'a> Formatter<'a> {
      * */
 
     // Formatting a token with a given size.
-    pub fn format_pp_token(&mut self, token_id: usize) {
-        println!("%%? Method [format_pp_token] called");
+    fn format_pp_token(&mut self, token_id: usize) {
         let size = self.token_sizes[&token_id].clone();
         // Do we need to clone always?
         let token = &self.tokens[token_id].clone();
@@ -485,40 +470,44 @@ impl<'a> Formatter<'a> {
                             let size_i32 = i32::from(&size);
                             let before_i32 = before.len_i32();
                             if size_i32 + before_i32 > self.space_left {
-                                self.break_new_line(breaks.0, breaks.1, breaks.2, *width);
+                                self.break_new_line(&breaks.0, breaks.1, &breaks.2, *width);
                             } else {
-                                self.break_same_line(fits.0, fits.1, fits.2)
+                                self.break_same_line(&fits.0, fits.1, &fits.2)
                             }
                         }
                         PpBox::Box() => {
                             // Has the line just been broken here?
                             if self.is_new_line {
-                                self.break_same_line(fits.0, fits.1, fits.2)
+                                self.break_same_line(&fits.0, fits.1, &fits.2)
                             } else {
                                 let size_i32 = i32::from(&size);
                                 let before_i32 = before.len_i32();
                                 if size_i32 + before_i32 > self.space_left {
-                                    self.break_new_line(breaks.0, breaks.1, breaks.2, *width);
+                                    self.break_new_line(&breaks.0, breaks.1, &breaks.2, *width);
                                 } else {
                                     if self.current_indent > self.margin - width + off {
-                                        self.break_new_line(breaks.0, breaks.1, breaks.2, *width);
+                                        self.break_new_line(&breaks.0, breaks.1, &breaks.2, *width);
                                     } else {
-                                        self.break_same_line(fits.0, fits.1, fits.2)
+                                        self.break_same_line(&fits.0, fits.1, &fits.2)
                                     }
                                 }
                             }
                         }
-                        PpBox::Hbox() => self.break_new_line(breaks.0, breaks.1, breaks.2, *width),
-                        PpBox::Hvbox() => self.break_new_line(breaks.0, breaks.1, breaks.2, *width),
-                        PpBox::Vbox() => self.break_same_line(fits.0, fits.1, fits.2),
-                        PpBox::Fits() => self.break_same_line(fits.0, fits.1, fits.2),
+                        PpBox::Hbox() => {
+                            self.break_new_line(&breaks.0, breaks.1, &breaks.2, *width)
+                        }
+                        PpBox::Hvbox() => {
+                            self.break_new_line(&breaks.0, breaks.1, &breaks.2, *width)
+                        }
+                        PpBox::Vbox() => self.break_same_line(&fits.0, fits.1, &fits.2),
+                        PpBox::Fits() => self.break_same_line(&fits.0, fits.1, &fits.2),
                     },
                 }
             }
         }
     }
 
-    pub fn advance_left(&mut self) {
+    fn advance_left(&mut self) {
         let queue_elem = self.queue.front();
         match queue_elem {
             None => (),
@@ -542,12 +531,12 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    pub fn enqueue_advance(&mut self, token_id: usize) {
+    fn enqueue_advance(&mut self, token_id: usize) {
         self.enqueue(token_id);
         self.advance_left()
     }
 
-    pub fn enqueue_string_as(&mut self, s: &'a str, size: i32) {
+    fn enqueue_string_as(&mut self, s: String, size: i32) {
         let token = PpToken::Text(s);
         // Move ownership
         let token_idx = self.add_token(token);
@@ -556,9 +545,9 @@ impl<'a> Formatter<'a> {
         self.enqueue_advance(token_idx)
     }
 
-    pub fn enqueue_string(&mut self, s: &'a str) {
-        self.enqueue_string_as(s, s.len_i32())
-    }
+    // fn enqueue_string(&mut self, s: String) {
+    //     self.enqueue_string_as(s, s.len()
+    // }
 
     /*
      * Routines for scan stack
@@ -566,10 +555,9 @@ impl<'a> Formatter<'a> {
      * */
 
     // The scan_stack is never empty.
-    pub fn initialise_scan_stack(&mut self) {
-        println!("%%? Method initialise_scan_stack");
+    fn initialise_scan_stack(&mut self) {
         self.scan_stack.clear();
-        let sentinel_token = PpToken::Text("");
+        let sentinel_token = PpToken::Text("".to_string());
 
         let token_idx = self.add_token(sentinel_token);
         self.token_sizes.insert(token_idx, Size::UNKNOWN);
@@ -593,18 +581,17 @@ impl<'a> Formatter<'a> {
      * Pattern matching on token in scan stack is also exhaustive,
      * since scan_push is used on breaks and opening of boxes.
      */
-    pub fn set_size(&mut self, ty: bool) {
-        println!("%%? Method set_size");
+    fn set_size(&mut self, ty: bool) {
         match self.scan_stack.last() {
             None => (),
             Some(PpScanT {
                 left_total,
                 token_idx: token_id,
             }) => {
-                println!(
-                    "%%? Last elem of Scan Stack: left_total {:?} token_id {:?}",
-                    *left_total, token_id
-                );
+                if *left_total < self.left_total {
+                    self.initialise_scan_stack();
+                    return;
+                }
                 let token = &self.tokens[*token_id];
                 match token {
                     PpToken::Break { fits: _, breaks: _ } => {
@@ -631,8 +618,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    pub fn scan_push(&mut self, b: bool, token_id: usize) {
-        println!("%%? Method scan_push called with token_id {:?}", token_id);
+    fn scan_push(&mut self, b: bool, token_id: usize) {
         self.enqueue(token_id);
         if b {
             self.set_size(true);
@@ -644,8 +630,7 @@ impl<'a> Formatter<'a> {
         self.scan_stack.push(scan_elem)
     }
 
-    pub fn open_box_gen(&mut self, indent: i32, br_ty: PpBox) {
-        println!("open_box_gen");
+    fn open_box_gen(&mut self, indent: i32, br_ty: PpBox) {
         self.curr_depth += 1;
         if self.curr_depth < self.max_boxes {
             let size = -1 * self.right_total;
@@ -656,11 +641,11 @@ impl<'a> Formatter<'a> {
             self.token_lengths.insert(token_idx, 0);
             self.scan_push(false, token_idx);
         } else if self.curr_depth == self.max_boxes {
-            self.enqueue_string(ELLIPSIS);
+            self.enqueue_string_as(ELLIPSIS.to_string(), 1);
         };
     }
 
-    pub fn open_sys_box(&mut self) {
+    fn open_sys_box(&mut self) {
         self.open_box_gen(0, PpBox::Hbox())
     }
 
@@ -681,7 +666,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    pub fn rinit(&mut self) {
+    fn rinit(&mut self) {
         self.clear_queue();
         self.initialise_scan_stack();
         self.format_stack.clear();
@@ -691,7 +676,7 @@ impl<'a> Formatter<'a> {
         self.open_sys_box();
     }
 
-    pub fn flush_queue(&mut self, end_with_newline: bool) {
+    fn flush_queue(&mut self, end_with_newline: bool) {
         while self.curr_depth > 1 {
             self.close_box();
         }
@@ -706,19 +691,18 @@ impl<'a> Formatter<'a> {
     // Procedures to format values and use boxes.
     // Should be either in a separate struct of plain functions.
 
-    pub fn print_as_size(&mut self, s: &'a str, size: usize) {
+    fn print_as_size(&mut self, s: String, size: usize) {
         if self.curr_depth < self.max_boxes {
             self.enqueue_string_as(s, size as i32);
         }
     }
 
-    // Do we need?
-    pub fn print_as(&mut self, s: &'a str, size: usize) {
+    fn print_as(&mut self, s: String, size: usize) {
         self.print_as_size(s, size)
     }
 
-    pub fn print_string(&mut self, s: &'a str) {
-        self.print_as(s, s.len());
+    pub fn print_string(&mut self, s: &str) {
+        self.print_as(s.to_string(), s.len());
     }
 
     // TODO@@ implement print_int etc if needed
@@ -770,24 +754,27 @@ impl<'a> Formatter<'a> {
 
     pub fn print_custom_break(
         &mut self,
-        fits: (&'a str, i32, &'a str),
-        breaks: (&'a str, i32, &'a str),
+        fits: (String, i32, String),
+        breaks: (String, i32, String),
     ) {
         if self.curr_depth < self.max_boxes {
+            let tok_len = fits.0.len_i32() + fits.1 + fits.2.len_i32();
             let token = PpToken::Break { fits, breaks };
 
             let token_idx = self.add_token(token);
             self.token_sizes
                 .insert(token_idx, Size(-1 * self.right_total));
-            self.token_lengths
-                .insert(token_idx, fits.0.len_i32() + fits.1 + fits.2.len_i32());
+            self.token_lengths.insert(token_idx, tok_len);
 
             self.scan_push(true, token_idx);
         }
     }
 
     pub fn print_break(&mut self, width: usize, offset: usize) {
-        self.print_custom_break(("", width as i32, ""), ("", offset as i32, ""))
+        self.print_custom_break(
+            ("".to_string(), width as i32, "".to_string()),
+            ("".to_string(), offset as i32, "".to_string()),
+        )
     }
 
     pub fn print_space(&mut self) {
@@ -811,6 +798,13 @@ impl<'a> Formatter<'a> {
             self.margin = INFINITY;
         }
     }
+
+    pub fn fprintf<Func, Args>(&mut self, func: Func, args: Args)
+    where
+        Func: Fn(&mut BufPrinter, Args),
+    {
+        func(self, args);
+    }
 }
 
 #[cfg(test)]
@@ -819,9 +813,8 @@ mod tests {
 
     #[test]
     fn test_simple() {
-        let mut f = Formatter::new(78, 10, 68, 10000000);
-        // f.open_box(2);
-        f.open_hovbox(2);
+        let mut f = BufPrinter::new(78, 10, 68, 10000000);
+        f.open_box(2);
         f.print_string("hello world, this is my very long sentence");
         f.print_space();
         f.print_string("Test sentence 1.");
